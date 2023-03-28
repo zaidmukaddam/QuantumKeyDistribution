@@ -1,28 +1,9 @@
+import numpy as np
 import streamlit as st
 import hashlib
 import json
-from qiskit import QuantumCircuit, QuantumRegister, transpile
+from qiskit import ClassicalRegister, QuantumCircuit, QuantumRegister, transpile
 from qiskit_aer import QasmSimulator
-
-# Quantum Key Generation
-def generate_quantum_key(qubits):
-    qr = QuantumRegister(qubits)
-    qc = QuantumCircuit(qr)
-
-    # Apply Hadamard gates to all qubits
-    for i in range(qubits):
-        qc.h(qr[i])
-
-    qc.measure_all()
-
-    # Perform quantum computation
-    simulator = QasmSimulator()
-    compiled_circuit = transpile(qc, simulator)
-    result = simulator.run(compiled_circuit, shots=1).result()
-
-    # Convert qubit states to a classical key
-    key = list(result.get_counts())[0]
-    return key
 
 
 # Quantum Key Distribution
@@ -41,12 +22,62 @@ class QuantumKeyManager:
         self.qubits = qubits
 
     def generate_key_pair(self):
-        sender_key = generate_quantum_key(self.qubits)
-        receiver_key = generate_quantum_key(self.qubits)
+        qr = QuantumRegister(self.qubits)
+        cr = ClassicalRegister(self.qubits)
+        qc_sender = QuantumCircuit(qr, cr)
+        qc_receiver = QuantumCircuit(qr, cr)
+
+        def encode_and_measure(qc, bits):
+            for i, bit in enumerate(bits):
+                if bit == 0:
+                    qc.h(qr[i])  # encode 0 as |+>
+                else:
+                    qc.x(qr[i])
+                    qc.h(qr[i])  # encode 1 as |->
+                # Measure in rectilinear basis (Z-basis)
+                qc.measure(qr[i], cr[i])
+
+        # Generate random bits for encoding
+        bits_sender = np.random.randint(2, size=self.qubits)
+        # Encode bits using BB84 protocol
+        encode_and_measure(qc_sender, bits_sender)
+
+        # Perform quantum computation
+        simulator = QasmSimulator()
+        compiled_circuit = transpile(qc_sender, simulator)
+        result = simulator.run(compiled_circuit, shots=1).result()
+
+        # Decode key using rectilinear basis (Z-basis)
+        sender_key = ""
+        for i in range(self.qubits):
+            if bits_sender[i] == 0:
+                sender_key += str(int(list(result.get_counts())[0][i]))  # measure in rectilinear basis (Z-basis)
+            else:
+                sender_key += str(int(not int(list(result.get_counts())[0][i])))  # measure in rectilinear basis (Z-basis)
+
+        # Generate new random bits for encoding
+        bits_receiver = np.random.randint(2, size=self.qubits)
+        # Encode bits using BB84 protocol
+        encode_and_measure(qc_receiver, bits_receiver)
+
+        # Perform quantum computation
+        compiled_circuit = transpile(qc_receiver, simulator)
+        result = simulator.run(compiled_circuit, shots=1).result()
+
+        # Decode key using rectilinear basis (Z-basis)
+        receiver_key = ""
+        for i in range(self.qubits):
+            if bits_receiver[i] == 0:
+                receiver_key += str(int(list(result.get_counts())[0][i]))  # measure in rectilinear basis (Z-basis)
+            else:
+                receiver_key += str(int(not int(list(result.get_counts())[0][i])))  # measure in rectilinear basis (Z-basis)
+
         return sender_key, receiver_key
 
+    # Create shared key by XORing the sender's and receiver's keys
     def create_shared_key(self, sender_key, receiver_key):
         return distribute_quantum_key(sender_key, receiver_key)
+
 
 # API Security
 class QuantumApiSecurity:
@@ -91,22 +122,24 @@ def main():
         payload = json.loads(payload_str)
 
         if st.button("Sign API Request"):
-            signature = st.session_state["api_security"].sign_request(payload)
+            api_security = st.session_state["api_security"]
+            signature = api_security.sign_request(payload)
             st.write(f"Signature: {signature}")
+            st.session_state["signature"] = signature
 
-            # Add an input field for the signature
-            input_signature = st.text_input("Enter the signature to verify")
+        if st.button("Verify API Request Signature"):
+            api_security = st.session_state["api_security"]
+            signature = st.session_state.get("signature")
+            if signature is None:
+                st.warning("First sign an API request to generate a signature.")
+            else:
+                authenticated = api_security.authenticate_request(payload, signature)
 
-            if st.button("Verify API Request Signature"):
-                if not input_signature:
-                    st.warning("Please enter a signature to verify.")
+                if authenticated:
+                    st.success("Request authenticated successfully.",icon="✅")
                 else:
-                    authenticated = st.session_state["api_security"].authenticate_request(payload, signature)
+                    st.error("Request authentication failed.",icon="❌")
 
-                    if authenticated:
-                        st.success("Request authenticated successfully.")
-                    else:
-                        st.error("Request authentication failed.")
 
 if __name__ == "__main__":
     main()
