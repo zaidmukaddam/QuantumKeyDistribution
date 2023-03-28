@@ -127,18 +127,19 @@ def main():
             st.write(f"Signature: {signature}")
             st.session_state["signature"] = signature
 
+        input_signature = st.text_input("Enter the signature to be verified")
         if st.button("Verify API Request Signature"):
             api_security = st.session_state["api_security"]
-            signature = st.session_state.get("signature")
-            if signature is None:
-                st.warning("First sign an API request to generate a signature.")
+            if input_signature == "":
+                st.warning("Please input a signature to be verified.")
             else:
-                authenticated = api_security.authenticate_request(payload, signature)
+                authenticated = api_security.authenticate_request(payload, input_signature)
 
                 if authenticated:
                     st.success("Request authenticated successfully.",icon="✅")
                 else:
                     st.error("Request authentication failed.",icon="❌")
+
 
 
 if __name__ == "__main__":
